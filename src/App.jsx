@@ -610,29 +610,42 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
       <header className="sticky top-0 z-10 backdrop-blur bg-white/80 border-b">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-2xl bg-gray-900 text-white grid place-items-center font-bold">RM</div>
-          <div className="flex-1">
-            <h1 className="text-lg font-semibold leading-tight">Reference Memorizer</h1>
-            <div className="text-xs text-gray-500">Add references → study by verse → type the reference. Two tries each.</div>
+        <div className="max-w-5xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-3 flex-1 min-w-[220px]">
+            <div className="w-9 h-9 rounded-2xl bg-gray-900 text-white grid place-items-center font-bold flex-shrink-0">RM</div>
+            <div className="min-w-0">
+              <h1 className="text-lg font-semibold leading-tight">Reference Memorizer</h1>
+              <div className="text-xs text-gray-500">Add references → study by verse → type the reference. Two tries each.</div>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <select className="border rounded-xl px-2 py-1 text-sm" value={translation} onChange={(e) => setTranslation(e.target.value)}>
+          <div className="flex flex-wrap gap-2 w-full sm:w-auto sm:flex-nowrap sm:items-center sm:justify-end">
+            <select
+              className="border rounded-xl px-2 py-1 text-sm flex-1 min-w-[140px] sm:min-w-0 sm:flex-none"
+              value={translation}
+              onChange={(e) => setTranslation(e.target.value)}
+            >
               <option value="kjv">KJV</option>
               <option value="web">WEB</option>
               <option value="asv">ASV</option>
-                          </select>
-            <select className="border rounded-xl px-2 py-1 text-sm" value={filter} onChange={(e) => setFilter(e.target.value)}>
+            </select>
+            <select
+              className="border rounded-xl px-2 py-1 text-sm flex-1 min-w-[140px] sm:min-w-0 sm:flex-none"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            >
               <option value="ALL">All</option>
               <option value="OT">Old Testament</option>
               <option value="NT">New Testament</option>
             </select>
-            <button className="px-3 py-1.5 rounded-xl bg-gray-200 hover:bg-gray-300 text-sm" onClick={() => setShowSettings((v) => !v)}>
+            <button
+              className="px-3 py-1.5 rounded-xl bg-gray-200 hover:bg-gray-300 text-sm flex-1 min-w-[120px] sm:min-w-0 sm:flex-none"
+              onClick={() => setShowSettings((v) => !v)}
+            >
               Settings
             </button>
             {inQuiz ? (
               <button
-                className="px-3 py-1.5 rounded-xl bg-gray-200 hover:bg-gray-300 text-sm"
+                className="px-3 py-1.5 rounded-xl bg-gray-200 hover:bg-gray-300 text-sm flex-1 min-w-[120px] sm:min-w-0 sm:flex-none"
                 onClick={() => {
                   setShowManager(true);
                   setQuizOrder([]);
@@ -641,7 +654,11 @@ export default function App() {
                 End
               </button>
             ) : (
-              <button className="px-3 py-1.5 rounded-xl bg-gray-900 text-white text-sm" onClick={startQuiz} disabled={filteredRefs.length === 0}>
+              <button
+                className="px-3 py-1.5 rounded-xl bg-gray-900 text-white text-sm flex-1 min-w-[120px] sm:min-w-0 sm:flex-none"
+                onClick={startQuiz}
+                disabled={filteredRefs.length === 0}
+              >
                 Start Quiz
               </button>
             )}
