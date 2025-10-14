@@ -457,6 +457,20 @@ export default function App() {
   function removeRef(rm) {
     setRefs((prev) => prev.filter((r) => r !== rm));
   }
+  function clearAllRefs() {
+    if (refs.length === 0) return;
+    if (!window.confirm("Remove all saved verses?")) return;
+    setRefs([]);
+    setQuizOrder([]);
+    setIdx(0);
+    setAttemptsLeft(2);
+    setFeedback(null);
+    setAnswer("");
+    setRevealRef(false);
+    setShowSolution(false);
+    setShowManager(true);
+    setVerseText("");
+  }
   function shuffle(array) {
     const a = array.slice();
     for (let i = a.length - 1; i > 0; i--) {
@@ -677,6 +691,16 @@ export default function App() {
                   <option value="full">Full Reference Mode</option>
                 </select>
               </label>
+              <div className="md:col-span-2 flex items-end">
+                <button
+                  type="button"
+                  className="w-full px-3 py-2 rounded-xl border border-red-200 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={clearAllRefs}
+                  disabled={refs.length === 0}
+                >
+                  Clear all saved verses
+                </button>
+              </div>
             </div>
             <p className="text-xs text-gray-500">We store settings in your browser only.</p>
           </div>
