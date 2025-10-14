@@ -439,9 +439,25 @@ export default function App() {
   const [revealRef, setRevealRef] = useState(false);
   const [showSolution, setShowSolution] = useState(false);
   const answerRef = useRef(null);
+  const [isDesktop, setIsDesktop] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(min-width: 768px)").matches;
+  });
   useEffect(() => {
     saveRefs(refs);
   }, [refs]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(min-width: 768px)");
+    const handleChange = (event) => setIsDesktop(event.matches);
+    setIsDesktop(mq.matches);
+    if (mq.addEventListener) mq.addEventListener("change", handleChange);
+    else mq.addListener(handleChange);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", handleChange);
+      else mq.removeListener(handleChange);
+    };
+  }, []);
   
   
   const filteredRefs = useMemo(() => {
@@ -623,7 +639,9 @@ export default function App() {
   }, []);
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
-      <header className="sticky top-0 z-10 backdrop-blur bg-white/80 border-b">
+      <header
+        className={`sticky top-0 z-10 backdrop-blur bg-white/80 border-b ${inQuiz ? "hidden md:block" : ""}`}
+      >
         <div className="max-w-5xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-3 flex-1 min-w-[220px]">
             <div className="w-9 h-9 rounded-2xl bg-gray-900 text-white grid place-items-center font-bold flex-shrink-0">RM</div>
@@ -679,9 +697,9 @@ export default function App() {
           </div>
         </div>
       </header>
-      <main className="max-w-5xl mx-auto p-4">
+      <main className={`max-w-5xl mx-auto ${inQuiz ? "p-0 md:p-4" : "p-4"}`}>
         {showSettings && (
-          <div className="mb-4 p-4 bg-white rounded-2xl shadow border">
+          <div className={`mb-4 p-4 bg-white rounded-2xl shadow border ${inQuiz ? "mx-4 md:mx-0" : ""}`}>
             <SectionTitle>Settings</SectionTitle>
             <div className="grid md:grid-cols-3 gap-3 mb-3">
               <label className="text-sm">
@@ -759,86 +777,182 @@ export default function App() {
           </div>
         )}
         {inQuiz && (
-          <div className="grid md:grid-cols-3 gap-4">
-            <div className="md:col-span-2 p-4 bg-white rounded-2xl shadow border">
-              <div className="mb-3">
-                <div className="h-2 w-full rounded-full bg-gray-100 overflow-hidden">
-                  <div className="h-full bg-gray-900" style={{ width: `${progress}%` }} />
-                </div>
-                <div className="flex justify-between text-xs text-gray-500 mt-1">
-                  <div>Item {idx + 1} of {quizOrder.length}</div>
-                  <div>Version: {translation.toUpperCase()} • Mode: {modeInitial ? "Initial" : "Full"}</div>
-                </div>
-              </div>
-              <SectionTitle>Verse</SectionTitle>
-              <div className="min-h-[140px] p-3 rounded-xl bg-gray-50 border">
-                {loading ? (
-                  <div className="animate-pulse text-sm text-gray-500">Loading verse…</div>
-                ) : (
-                  <p className="text-base leading-7">{verseText || "(No text)"}</p>
-                )}
-              </div>
-              <div className="mt-4 flex gap-2">
-                <input
-                  ref={answerRef}
-                  className={`flex-1 border rounded-xl px-3 py-2 ${feedback === "correct" ? "border-green-500" : feedback === "wrong" ? "border-red-500" : ""}`}
-                  placeholder={modeInitial ? "Type first letter/number + digits (e.g., p16811 → Psalm 16:8-11, 129 → 2 Corinthians 12:9)" : "Type the reference (e.g., John 3:16)"}
-                  value={answer}
-                  onChange={handleAnswerChange}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      if (showSolution) nextItem();
-                      else checkAnswer();
-                      return;
-                    }
-                    handleAnswerKeyDown(e);
-                  }}
-                />
-                <button className="px-4 py-2 rounded-xl bg-gray-900 text-white" onClick={showSolution ? nextItem : checkAnswer}>
-                  {showSolution ? "Next" : "Check"}
-                </button>
-              </div>
-              <div className="mt-2 text-sm flex items-center gap-3">
-                <span className="text-gray-500">Attempts left: {attemptsLeft}</span>
-                {feedback === "correct" && <span className="text-green-700">Correct! → Next…</span>}
-                {feedback === "wrong" && attemptsLeft === 0 && (
-                  <span className="text-red-700">
-                    Incorrect. Correct reference: <span className="font-medium">{filteredRefs[quizOrder[idx]]}</span>
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="grid gap-3 content-start">
-              <Stat label="Filter" value={filter} />
-              <Stat label="Attempts left" value={attemptsLeft} />
-              <div className="p-3 rounded-2xl bg-white shadow border text-sm">
-                <div className="font-medium mb-1">Current Reference</div>
-                <div className="relative">
-                  <div className={`${revealRef ? "" : "blur-md"} select-none whitespace-nowrap overflow-hidden text-ellipsis`}>
-                    {filteredRefs[quizOrder[idx]] || "—"}
+          isDesktop ? (
+            <div className="grid md:grid-cols-3 gap-4">
+              <div className="md:col-span-2 p-4 bg-white rounded-2xl shadow border">
+                <div className="mb-3">
+                  <div className="h-2 w-full rounded-full bg-gray-100 overflow-hidden">
+                    <div className="h-full bg-gray-900" style={{ width: `${progress}%` }} />
                   </div>
-                  {!revealRef && (
-                    <div className="pointer-events-none absolute inset-0 grid place-items-center text-xs text-gray-500">Hidden during quiz</div>
+                  <div className="flex justify-between text-xs text-gray-500 mt-1">
+                    <div>Item {idx + 1} of {quizOrder.length}</div>
+                    <div>Version: {translation.toUpperCase()} • Mode: {modeInitial ? "Initial" : "Full"}</div>
+                  </div>
+                </div>
+                <SectionTitle>Verse</SectionTitle>
+                <div className="min-h-[140px] p-3 rounded-xl bg-gray-50 border">
+                  {loading ? (
+                    <div className="animate-pulse text-sm text-gray-500">Loading verse…</div>
+                  ) : (
+                    <p className="text-base leading-7">{verseText || "(No text)"}</p>
+                  )}
+                </div>
+                <div className="mt-4 flex gap-2">
+                  <input
+                    ref={answerRef}
+                    className={`flex-1 border rounded-xl px-3 py-2 ${feedback === "correct" ? "border-green-500" : feedback === "wrong" ? "border-red-500" : ""}`}
+                    placeholder={modeInitial ? "Type first letter/number + digits (e.g., p16811 → Psalm 16:8-11, 129 → 2 Corinthians 12:9)" : "Type the reference (e.g., John 3:16)"}
+                    value={answer}
+                    onChange={handleAnswerChange}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        if (showSolution) nextItem();
+                        else checkAnswer();
+                        return;
+                      }
+                      handleAnswerKeyDown(e);
+                    }}
+                  />
+                  <button className="px-4 py-2 rounded-xl bg-gray-900 text-white" onClick={showSolution ? nextItem : checkAnswer}>
+                    {showSolution ? "Next" : "Check"}
+                  </button>
+                </div>
+                <div className="mt-2 text-sm flex items-center gap-3">
+                  <span className="text-gray-500">Attempts left: {attemptsLeft}</span>
+                  {feedback === "correct" && <span className="text-green-700">Correct! → Next…</span>}
+                  {feedback === "wrong" && attemptsLeft === 0 && (
+                    <span className="text-red-700">
+                      Incorrect. Correct reference: <span className="font-medium">{filteredRefs[quizOrder[idx]]}</span>
+                    </span>
                   )}
                 </div>
               </div>
-              <div className="p-3 rounded-2xl bg-white shadow border text-sm">
-                <div className="font-medium mb-1">Controls</div>
-                <div className="flex flex-wrap gap-2">
-                  <button className="px-3 py-1.5 rounded-xl bg-gray-200 hover:bg-gray-300" onClick={() => loadCurrentVerse(quizOrder[idx])}>
+              <div className="grid gap-3 content-start">
+                <Stat label="Filter" value={filter} />
+                <Stat label="Attempts left" value={attemptsLeft} />
+                <div className="p-3 rounded-2xl bg-white shadow border text-sm">
+                  <div className="font-medium mb-1">Current Reference</div>
+                  <div className="relative">
+                    <div className={`${revealRef ? "" : "blur-md"} select-none whitespace-nowrap overflow-hidden text-ellipsis`}>
+                      {filteredRefs[quizOrder[idx]] || "—"}
+                    </div>
+                    {!revealRef && (
+                      <div className="pointer-events-none absolute inset-0 grid place-items-center text-xs text-gray-500">Hidden during quiz</div>
+                    )}
+                  </div>
+                </div>
+                <div className="p-3 rounded-2xl bg-white shadow border text-sm">
+                  <div className="font-medium mb-1">Controls</div>
+                  <div className="flex flex-wrap gap-2">
+                    <button className="px-3 py-1.5 rounded-xl bg-gray-200 hover:bg-gray-300" onClick={() => loadCurrentVerse(quizOrder[idx])}>
+                      Reload
+                    </button>
+                    <button className="px-3 py-1.5 rounded-xl bg-gray-200 hover:bg-gray-300" onClick={nextItem}>
+                      Skip
+                    </button>
+                    <button className="px-3 py-1.5 rounded-xl bg-gray-900 text-white" onClick={() => setRevealRef((v) => !v)}>
+                      {revealRef ? "Hide" : "Reveal"}
+                    </button>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col min-h-[100dvh] bg-gray-50">
+              <div className="border-b bg-white shadow-sm px-4 py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold">Item {idx + 1} of {quizOrder.length}</div>
+                  <div className="text-xs text-gray-500 truncate">Version: {translation.toUpperCase()} • Mode: {modeInitial ? "Initial" : "Full"}</div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    className="px-3 py-1.5 rounded-xl bg-gray-200 text-sm"
+                    onClick={() => setShowSettings((v) => !v)}
+                  >
+                    Settings
+                  </button>
+                  <button
+                    className="px-3 py-1.5 rounded-xl bg-gray-900 text-white text-sm"
+                    onClick={() => {
+                      setShowManager(true);
+                      setQuizOrder([]);
+                    }}
+                  >
+                    End
+                  </button>
+                </div>
+              </div>
+              <div className="px-4 pt-3">
+                <div className="h-2 w-full rounded-full bg-gray-200 overflow-hidden">
+                  <div className="h-full bg-gray-900" style={{ width: `${progress}%` }} />
+                </div>
+              </div>
+              <div className="flex-1 flex flex-col px-4 py-3 gap-3">
+                <div className="flex-1 min-h-[50dvh] p-4 rounded-2xl bg-white shadow border overflow-y-auto">
+                  {loading ? (
+                    <div className="animate-pulse text-sm text-gray-500">Loading verse…</div>
+                  ) : (
+                    <p className="text-base leading-7 whitespace-pre-wrap">{verseText || "(No text)"}</p>
+                  )}
+                </div>
+              </div>
+              <div
+                className="bg-white border-t shadow-lg px-4 py-3 space-y-3"
+                style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
+              >
+                <div className="flex gap-2">
+                  <input
+                    ref={answerRef}
+                    className={`flex-1 border rounded-xl px-3 py-3 text-base ${feedback === "correct" ? "border-green-500" : feedback === "wrong" ? "border-red-500" : ""}`}
+                    placeholder={modeInitial ? "Type book initial + numbers" : "Type the reference"}
+                    value={answer}
+                    onChange={handleAnswerChange}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        if (showSolution) nextItem();
+                        else checkAnswer();
+                        return;
+                      }
+                      handleAnswerKeyDown(e);
+                    }}
+                  />
+                  <button className="px-4 py-3 rounded-xl bg-gray-900 text-white" onClick={showSolution ? nextItem : checkAnswer}>
+                    {showSolution ? "Next" : "Check"}
+                  </button>
+                </div>
+                <div className="text-sm flex flex-wrap items-center gap-3">
+                  <span className="text-gray-500">Attempts left: {attemptsLeft}</span>
+                  {feedback === "correct" && <span className="text-green-700">Correct! → Next…</span>}
+                  {feedback === "wrong" && attemptsLeft === 0 && (
+                    <span className="text-red-700">
+                      Incorrect. Correct reference: <span className="font-medium">{filteredRefs[quizOrder[idx]]}</span>
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-sm">
+                  <button className="px-3 py-2 rounded-xl bg-gray-200" onClick={() => loadCurrentVerse(quizOrder[idx])}>
                     Reload
                   </button>
-                  <button className="px-3 py-1.5 rounded-xl bg-gray-200 hover:bg-gray-300" onClick={nextItem}>
+                  <button className="px-3 py-2 rounded-xl bg-gray-200" onClick={nextItem}>
                     Skip
                   </button>
-                  <button className="px-3 py-1.5 rounded-xl bg-gray-900 text-white" onClick={() => setRevealRef((v) => !v)}>
+                  <button className="px-3 py-2 rounded-xl bg-gray-900 text-white" onClick={() => setRevealRef((v) => !v)}>
                     {revealRef ? "Hide" : "Reveal"}
                   </button>
                 </div>
-                
+                <div className="text-xs text-gray-500">
+                  <div className="font-medium text-gray-700 mb-1">Current Reference</div>
+                  <div className="relative">
+                    <div className={`${revealRef ? "" : "blur-sm"} select-none text-base font-medium`}>{filteredRefs[quizOrder[idx]] || "—"}</div>
+                    {!revealRef && (
+                      <div className="pointer-events-none absolute inset-0 grid place-items-center text-[11px] text-gray-500">Hidden during quiz</div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
+          )
         )}
       </main>
       <footer className="max-w-5xl mx-auto p-4 text-center text-xs text-gray-500">
