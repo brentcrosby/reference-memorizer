@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createLearnScriptureClient, DEFAULT_BASE_URL } from "./learnScriptureClient";
 
 function canonicalizeRef(s) {
   return (s || "")
@@ -264,6 +265,7 @@ function whichTestament(ref) {
 }
 
 const LS_KEY = "bible-quiz-references-v1";
+const LS_SYNC_KEY = "reference-memorizer-learnscripture-settings-v1";
 
 
 
@@ -356,6 +358,28 @@ const loadRefs = () => {
 };
 const saveRefs = (arr) => localStorage.setItem(LS_KEY, JSON.stringify(arr));
 
+const DEFAULT_LS_SETTINGS = {
+  enabled: false,
+  baseUrl: DEFAULT_BASE_URL,
+  apiToken: "",
+  username: "",
+  password: "",
+  csrfToken: "",
+};
+
+const loadLearnSettings = () => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LS_SYNC_KEY) || "{}") || {};
+    return { ...DEFAULT_LS_SETTINGS, ...raw };
+  } catch {
+    return { ...DEFAULT_LS_SETTINGS };
+  }
+};
+
+const saveLearnSettings = (settings) => {
+  localStorage.setItem(LS_SYNC_KEY, JSON.stringify(settings));
+};
+
 function stripHtml(html) {
   const tmp = document.createElement("div");
   tmp.innerHTML = html || "";
@@ -422,6 +446,11 @@ export default function App() {
   }, []);
   const [modeInitial, setModeInitial] = useState(true);
   const [refs, setRefs] = useState(loadRefs());
+  const [learnSettings, setLearnSettings] = useState(loadLearnSettings);
+  const [syncState, setSyncState] = useState({ status: "idle", message: "", timestamp: null });
+  const [pushState, setPushState] = useState({ status: "idle", message: "", timestamp: null });
+  const [syncing, setSyncing] = useState(false);
+  const [pushing, setPushing] = useState(false);
   const [newRef, setNewRef] = useState("");
   const [translation, setTranslation] = useState("kjv");
   const [filter, setFilter] = useState("ALL");
@@ -439,11 +468,141 @@ export default function App() {
   const [revealRef, setRevealRef] = useState(false);
   const [showSolution, setShowSolution] = useState(false);
   const answerRef = useRef(null);
+  const initialSyncAttemptRef = useRef(false);
   useEffect(() => {
     saveRefs(refs);
   }, [refs]);
-  
-  
+  useEffect(() => {
+    saveLearnSettings(learnSettings);
+  }, [learnSettings]);
+
+  const hasLearnCredentials = useMemo(() => {
+    return Boolean(learnSettings.apiToken || (learnSettings.username && learnSettings.password));
+  }, [learnSettings]);
+  const canSyncLearnScripture = learnSettings.enabled && hasLearnCredentials;
+
+  const updateLearnSettings = useCallback((patch) => {
+    setLearnSettings((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  const formatTimestamp = (ts) => {
+    if (!ts) return "";
+    const date = new Date(ts);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleTimeString();
+  };
+
+  const redactSecrets = useCallback(
+    (message) => {
+      if (!message) return "";
+      const secrets = [learnSettings.apiToken, learnSettings.password, learnSettings.csrfToken];
+      let safe = message;
+      secrets.forEach((secret) => {
+        if (!secret) return;
+        const escaped = secret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        safe = safe.replace(new RegExp(escaped, "g"), "[redacted]");
+      });
+      return safe;
+    },
+    [learnSettings.apiToken, learnSettings.password, learnSettings.csrfToken],
+  );
+
+  const importFromLearnScripture = useCallback(
+    async ({ silent } = {}) => {
+      if (!learnSettings.enabled) {
+        if (!silent) {
+          setSyncState({ status: "disabled", message: "LearnScripture sync is disabled.", timestamp: Date.now() });
+        }
+        return;
+      }
+      if (!hasLearnCredentials) {
+        setSyncState({
+          status: "error",
+          message: "Provide a token or username/password before syncing with LearnScripture.",
+          timestamp: Date.now(),
+        });
+        return;
+      }
+      setSyncing(true);
+      setSyncState({ status: "pending", message: "Syncing with LearnScripture…", timestamp: Date.now() });
+      try {
+        const client = createLearnScriptureClient(learnSettings);
+        const remoteRefs = await client.fetchCurrentVerses();
+        const safeRefs = Array.isArray(remoteRefs) ? remoteRefs : [];
+        let newCount = 0;
+        setRefs((prev) => {
+          const nextSet = new Set(prev);
+          safeRefs.forEach((ref) => {
+            const clean = String(ref || "").trim();
+            if (!clean) return;
+            if (!nextSet.has(clean)) {
+              newCount += 1;
+              nextSet.add(clean);
+            }
+          });
+          return Array.from(nextSet);
+        });
+        const successMessage =
+          newCount > 0 ? `Imported ${newCount} new references.` : "No new references found on LearnScripture.";
+        setSyncState({ status: "success", message: successMessage, timestamp: Date.now() });
+      } catch (error) {
+        setSyncState({
+          status: "error",
+          message: redactSecrets(error?.message) || "Sync failed. Check your LearnScripture credentials.",
+          timestamp: Date.now(),
+        });
+      } finally {
+        setSyncing(false);
+      }
+    },
+    [learnSettings, hasLearnCredentials],
+  );
+
+  const pushToLearnScripture = useCallback(async () => {
+    if (!learnSettings.enabled) {
+      setPushState({ status: "disabled", message: "Enable LearnScripture sync before exporting.", timestamp: Date.now() });
+      return;
+    }
+    if (!hasLearnCredentials) {
+      setPushState({
+        status: "error",
+        message: "Provide a token or username/password before exporting to LearnScripture.",
+        timestamp: Date.now(),
+      });
+      return;
+    }
+    if (!refs.length) {
+      setPushState({ status: "error", message: "No references to export.", timestamp: Date.now() });
+      return;
+    }
+    setPushing(true);
+    setPushState({ status: "pending", message: "Uploading references to LearnScripture…", timestamp: Date.now() });
+    try {
+      const client = createLearnScriptureClient(learnSettings);
+      const uniqueRefs = Array.from(new Set(refs));
+      await client.postVerses(uniqueRefs);
+      const message = `Exported ${uniqueRefs.length} references to LearnScripture.`;
+      setPushState({ status: "success", message, timestamp: Date.now() });
+      await importFromLearnScripture({ silent: true });
+    } catch (error) {
+      setPushState({
+        status: "error",
+        message: redactSecrets(error?.message) || "Export failed. Check your LearnScripture credentials.",
+        timestamp: Date.now(),
+      });
+    } finally {
+      setPushing(false);
+    }
+  }, [learnSettings, hasLearnCredentials, refs, importFromLearnScripture]);
+
+  useEffect(() => {
+    if (initialSyncAttemptRef.current) return;
+    if (!canSyncLearnScripture) return;
+    initialSyncAttemptRef.current = true;
+    importFromLearnScripture();
+  }, [canSyncLearnScripture, importFromLearnScripture]);
+
+
   const filteredRefs = useMemo(() => {
     if (filter === "ALL") return refs;
     return refs.filter((r) => whichTestament(r) === filter);
@@ -660,6 +819,129 @@ export default function App() {
                   <option value="full">Full Reference Mode</option>
                 </select>
               </label>
+            </div>
+            <div className="border-t border-gray-200 pt-3 mt-4">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-3">
+                <div>
+                  <div className="text-sm font-medium">LearnScripture Sync</div>
+                  <div className="text-xs text-gray-500">Import and export references with your LearnScripture account.</div>
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <span className="text-gray-600">Enabled</span>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={learnSettings.enabled}
+                    onChange={(e) => updateLearnSettings({ enabled: e.target.checked })}
+                  />
+                </label>
+              </div>
+              <div className="grid md:grid-cols-2 gap-3">
+                <label className="text-sm">
+                  <div className="text-gray-600 mb-1">Base URL</div>
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    type="url"
+                    value={learnSettings.baseUrl}
+                    onChange={(e) => updateLearnSettings({ baseUrl: e.target.value })}
+                    disabled={!learnSettings.enabled}
+                    placeholder="https://learnscripture.net"
+                  />
+                </label>
+                <label className="text-sm">
+                  <div className="text-gray-600 mb-1">API Token</div>
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    type="password"
+                    value={learnSettings.apiToken}
+                    onChange={(e) => updateLearnSettings({ apiToken: e.target.value })}
+                    disabled={!learnSettings.enabled}
+                    placeholder="Token from browser developer tools"
+                  />
+                </label>
+                <label className="text-sm">
+                  <div className="text-gray-600 mb-1">Username (optional)</div>
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={learnSettings.username}
+                    onChange={(e) => updateLearnSettings({ username: e.target.value })}
+                    disabled={!learnSettings.enabled}
+                    placeholder="your username"
+                  />
+                </label>
+                <label className="text-sm">
+                  <div className="text-gray-600 mb-1">Password (optional)</div>
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    type="password"
+                    value={learnSettings.password}
+                    onChange={(e) => updateLearnSettings({ password: e.target.value })}
+                    disabled={!learnSettings.enabled}
+                    placeholder="password"
+                  />
+                </label>
+                <label className="text-sm">
+                  <div className="text-gray-600 mb-1">CSRF Token (optional)</div>
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={learnSettings.csrfToken}
+                    onChange={(e) => updateLearnSettings({ csrfToken: e.target.value })}
+                    disabled={!learnSettings.enabled}
+                    placeholder="e.g., from csrftoken cookie"
+                  />
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-2 mt-3">
+                <button
+                  className="px-3 py-1.5 rounded-xl bg-gray-200 hover:bg-gray-300 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => importFromLearnScripture()}
+                  disabled={!canSyncLearnScripture || syncing}
+                >
+                  {syncing ? "Syncing…" : "Import from LearnScripture"}
+                </button>
+                <button
+                  className="px-3 py-1.5 rounded-xl bg-gray-900 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={pushToLearnScripture}
+                  disabled={!canSyncLearnScripture || pushing}
+                >
+                  {pushing ? "Uploading…" : "Export to LearnScripture"}
+                </button>
+              </div>
+              <div className="mt-2 text-xs space-y-1">
+                {syncState.message && (
+                  <div
+                    className={
+                      syncState.status === "error"
+                        ? "text-red-600"
+                        : syncState.status === "success"
+                        ? "text-green-600"
+                        : "text-gray-600"
+                    }
+                  >
+                    Sync: {syncState.message}
+                    {syncState.timestamp && (
+                      <span className="ml-1 text-[10px] text-gray-400">({formatTimestamp(syncState.timestamp)})</span>
+                    )}
+                  </div>
+                )}
+                {pushState.message && (
+                  <div
+                    className={
+                      pushState.status === "error"
+                        ? "text-red-600"
+                        : pushState.status === "success"
+                        ? "text-green-600"
+                        : "text-gray-600"
+                    }
+                  >
+                    Export: {pushState.message}
+                    {pushState.timestamp && (
+                      <span className="ml-1 text-[10px] text-gray-400">({formatTimestamp(pushState.timestamp)})</span>
+                    )}
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-gray-500 mt-3">Credentials stay in this browser. They are never sent anywhere else.</p>
             </div>
             <p className="text-xs text-gray-500">We store settings in your browser only.</p>
           </div>
