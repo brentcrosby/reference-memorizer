@@ -451,6 +451,23 @@ export default function App() {
     if (typeof window === "undefined") return false;
     return window.matchMedia("(min-width: 768px)").matches;
   });
+  const verseBoxMinHeight = useMemo(() => {
+    const baseMin = isDesktop ? 88 : 110;
+    const lineHeight = isDesktop ? 26 : 24;
+    const extraPadding = isDesktop ? 24 : 28;
+    const charsPerLine = isDesktop ? 62 : 44;
+    if (loading && !verseText) {
+      return isDesktop ? 120 : 140;
+    }
+    const textLength = (verseText || "").replace(/\s+/g, " ").trim().length;
+    if (!textLength) {
+      return baseMin;
+    }
+    const approxLines = Math.max(1, Math.ceil(textLength / charsPerLine));
+    const computed = approxLines * lineHeight + extraPadding;
+    const capped = Math.min(computed, isDesktop ? 320 : 360);
+    return Math.max(baseMin, Math.round(capped));
+  }, [isDesktop, loading, verseText]);
   useEffect(() => {
     saveRefs(refs);
   }, [refs]);
@@ -810,7 +827,7 @@ export default function App() {
                   </div>
                 </div>
                 <SectionTitle>Verse</SectionTitle>
-                <div className="min-h-[140px] p-3 rounded-xl bg-gray-50 border">
+                <div className="p-3 rounded-xl bg-gray-50 border" style={{ minHeight: verseBoxMinHeight }}>
                   {loading ? (
                     <div className="animate-pulse text-sm text-gray-500">Loading verse…</div>
                   ) : (
@@ -933,7 +950,10 @@ export default function App() {
                       {showSolution ? "Next" : "Check"}
                     </button>
                   </div>
-                  <div className="flex-1 min-h-[32dvh] p-3 rounded-xl bg-gray-50 border overflow-y-auto">
+                  <div
+                    className="flex-none p-3 rounded-xl bg-gray-50 border overflow-y-auto"
+                    style={{ minHeight: verseBoxMinHeight }}
+                  >
                     {loading ? (
                       <div className="animate-pulse text-sm text-gray-500">Loading verse…</div>
                     ) : (
