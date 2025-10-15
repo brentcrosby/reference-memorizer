@@ -553,9 +553,17 @@ export default function App() {
       setLoading(false);
     }
   }
-  async function nextItem() {
+  async function nextItem({ requeueCurrent = false } = {}) {
+    if (requeueCurrent) {
+      setQuizOrder((prev) => {
+        const current = prev[idx];
+        if (current == null) return prev;
+        return [...prev, current];
+      });
+    }
+    const totalLength = requeueCurrent ? quizOrder.length + 1 : quizOrder.length;
     const next = idx + 1;
-    if (next >= quizOrder.length) {
+    if (next >= totalLength) {
       setFeedback(null);
       setShowManager(true);
       return;
@@ -566,7 +574,14 @@ export default function App() {
     setAnswer("");
     setRevealRef(false);
     setShowSolution(false);
-    await loadCurrentVerse(quizOrder[next]);
+    const nextOrderIdx =
+      requeueCurrent && next >= quizOrder.length ? quizOrder[idx] : quizOrder[next];
+    if (nextOrderIdx == null) {
+      setFeedback(null);
+      setShowManager(true);
+      return;
+    }
+    await loadCurrentVerse(nextOrderIdx);
     setTimeout(() => answerRef.current?.focus(), 0);
   }
   function checkAnswer() {
@@ -575,7 +590,7 @@ export default function App() {
     if (!guess) return;
     if (refsMatch(guess, currentRef, modeInitial)) {
       setFeedback("correct");
-      setTimeout(() => nextItem(), 700);
+      setTimeout(() => nextItem({ requeueCurrent: false }), 700);
     } else {
       if (attemptsLeft > 1) {
         setAttemptsLeft(attemptsLeft - 1);
@@ -843,14 +858,20 @@ export default function App() {
                     onChange={handleAnswerChange}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
-                        if (showSolution) nextItem();
+                        if (showSolution) nextItem({ requeueCurrent: true });
                         else checkAnswer();
                         return;
                       }
                       handleAnswerKeyDown(e);
                     }}
                   />
-                  <button className="px-4 py-2 rounded-xl bg-gray-900 text-white" onClick={showSolution ? nextItem : checkAnswer}>
+                  <button
+                    className="px-4 py-2 rounded-xl bg-gray-900 text-white"
+                    onClick={() => {
+                      if (showSolution) nextItem({ requeueCurrent: true });
+                      else checkAnswer();
+                    }}
+                  >
                     {showSolution ? "Next" : "Check"}
                   </button>
                 </div>
@@ -884,7 +905,10 @@ export default function App() {
                     <button className="px-3 py-1.5 rounded-xl bg-gray-200 hover:bg-gray-300" onClick={() => loadCurrentVerse(quizOrder[idx])}>
                       Reload
                     </button>
-                    <button className="px-3 py-1.5 rounded-xl bg-gray-200 hover:bg-gray-300" onClick={nextItem}>
+                    <button
+                      className="px-3 py-1.5 rounded-xl bg-gray-200 hover:bg-gray-300"
+                      onClick={() => nextItem({ requeueCurrent: true })}
+                    >
                       Skip
                     </button>
                     <button className="px-3 py-1.5 rounded-xl bg-gray-900 text-white" onClick={() => setRevealRef((v) => !v)}>
@@ -939,14 +963,20 @@ export default function App() {
                       onChange={handleAnswerChange}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
-                          if (showSolution) nextItem();
+                          if (showSolution) nextItem({ requeueCurrent: true });
                           else checkAnswer();
                           return;
                         }
                         handleAnswerKeyDown(e);
                       }}
                     />
-                    <button className="px-4 py-3 rounded-xl bg-gray-900 text-white" onClick={showSolution ? nextItem : checkAnswer}>
+                    <button
+                      className="px-4 py-3 rounded-xl bg-gray-900 text-white"
+                      onClick={() => {
+                        if (showSolution) nextItem({ requeueCurrent: true });
+                        else checkAnswer();
+                      }}
+                    >
                       {showSolution ? "Next" : "Check"}
                     </button>
                   </div>
@@ -973,7 +1003,7 @@ export default function App() {
                     <button className="px-3 py-2 rounded-xl bg-gray-200" onClick={() => loadCurrentVerse(quizOrder[idx])}>
                       Reload
                     </button>
-                    <button className="px-3 py-2 rounded-xl bg-gray-200" onClick={nextItem}>
+                    <button className="px-3 py-2 rounded-xl bg-gray-200" onClick={() => nextItem({ requeueCurrent: true })}>
                       Skip
                     </button>
                     <button className="px-3 py-2 rounded-xl bg-gray-900 text-white" onClick={() => setRevealRef((v) => !v)}>
