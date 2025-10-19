@@ -447,6 +447,7 @@ export default function App() {
   const [revealRef, setRevealRef] = useState(false);
   const [showSolution, setShowSolution] = useState(false);
   const answerRef = useRef(null);
+  const verseCache = useRef(new Map());
   const [isDesktop, setIsDesktop] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.matchMedia("(min-width: 768px)").matches;
@@ -545,8 +546,32 @@ export default function App() {
     if (!ref) return;
     setLoading(true);
     try {
-      const txt = await fetchVerseText(ref, translation);
-      setVerseText(txt);
+      const normalizedRefKey = canonicalizeRef(ref);
+      const cacheKey = `${translation}::${normalizedRefKey}`;
+      const storageKey = `verseCache:${translation}:${normalizedRefKey}`;
+      let cachedText = verseCache.current.get(cacheKey);
+      if (cachedText === undefined && typeof window !== "undefined") {
+        try {
+          const stored = localStorage.getItem(storageKey);
+          if (stored != null) {
+            cachedText = stored;
+            verseCache.current.set(cacheKey, stored);
+          }
+        } catch {}
+      }
+      if (cachedText !== undefined) {
+        setVerseText(cachedText);
+        return;
+      }
+      const fetched = await fetchVerseText(ref, translation);
+      const normalized = (fetched || "").replace(/\s+/g, " ").trim();
+      verseCache.current.set(cacheKey, normalized);
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem(storageKey, normalized);
+        } catch {}
+      }
+      setVerseText(normalized);
     } catch {
       setVerseText("Error fetching verse. Check your reference format.");
     } finally {
