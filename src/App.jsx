@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createLearnScriptureClient, DEFAULT_LEARNSCRIPTURE_SETTINGS } from "./learnScriptureClient";
 
 function canonicalizeRef(s) {
   return (s || "")
@@ -265,6 +266,7 @@ function whichTestament(ref) {
 
 const LS_KEY = "bible-quiz-references-v1";
 const LS_TRANSLATION_KEY = "bible-quiz-translation-v1";
+const LS_LEARNSCRIPTURE_KEY = "learn-scripture-settings-v1";
 
 
 
@@ -357,6 +359,23 @@ const loadRefs = () => {
 };
 const saveRefs = (arr) => localStorage.setItem(LS_KEY, JSON.stringify(arr));
 
+const loadLearnScriptureSettings = () => {
+  const defaults = { ...DEFAULT_LEARNSCRIPTURE_SETTINGS };
+  if (typeof window === "undefined") return defaults;
+  try {
+    const stored = localStorage.getItem(LS_LEARNSCRIPTURE_KEY);
+    if (!stored) return defaults;
+    const parsed = JSON.parse(stored);
+    if (parsed && typeof parsed === "object") {
+      return {
+        ...defaults,
+        ...parsed,
+      };
+    }
+  } catch {}
+  return defaults;
+};
+
 function stripHtml(html) {
   const tmp = document.createElement("div");
   tmp.innerHTML = html || "";
@@ -434,8 +453,12 @@ export default function App() {
   });
   const [filter, setFilter] = useState("ALL");
   const [showSettings, setShowSettings] = useState(false);
-  
-  
+  const [learnSettings, setLearnSettings] = useState(loadLearnScriptureSettings);
+  const [syncingLearn, setSyncingLearn] = useState(false);
+  const [learnSyncResult, setLearnSyncResult] = useState(null);
+  const learnClient = useMemo(() => createLearnScriptureClient(learnSettings), [learnSettings]);
+
+
   const [quizOrder, setQuizOrder] = useState([]);
   const [idx, setIdx] = useState(0);
   const [verseText, setVerseText] = useState("");
@@ -447,6 +470,8 @@ export default function App() {
   const [revealRef, setRevealRef] = useState(false);
   const [showSolution, setShowSolution] = useState(false);
   const answerRef = useRef(null);
+  const learnSyncingRef = useRef(false);
+  const prevLearnSettingsRef = useRef(null);
   const [isDesktop, setIsDesktop] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.matchMedia("(min-width: 768px)").matches;
@@ -479,6 +504,12 @@ export default function App() {
   }, [translation]);
   useEffect(() => {
     if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(LS_LEARNSCRIPTURE_KEY, JSON.stringify(learnSettings));
+    } catch {}
+  }, [learnSettings]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     const mq = window.matchMedia("(min-width: 768px)");
     const handleChange = (event) => setIsDesktop(event.matches);
     setIsDesktop(mq.matches);
@@ -491,15 +522,120 @@ export default function App() {
   }, []);
   
   
+  const updateLearnSetting = useCallback((field, value) => {
+    setLearnSettings((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+  }, []);
+  const syncWithLearnScripture = useCallback(async () => {
+    if (!learnSettings.enabled) {
+      setLearnSyncResult({
+        type: "info",
+        message: "Enable LearnScripture sync to fetch verses.",
+      });
+      return;
+    }
+    if (!learnClient.isConfigured) {
+      setLearnSyncResult({
+        type: "info",
+        message: "Provide a LearnScripture API token or username/password.",
+      });
+      return;
+    }
+    if (learnSyncingRef.current) return;
+    learnSyncingRef.current = true;
+    setSyncingLearn(true);
+    setLearnSyncResult(null);
+    try {
+      const remoteRefs = await learnClient.fetchCurrentVerses();
+      const normalized = Array.isArray(remoteRefs)
+        ? remoteRefs.map((r) => String(r || "").trim()).filter(Boolean)
+        : [];
+      if (normalized.length === 0) {
+        setLearnSyncResult({
+          type: "info",
+          message: "No verses returned from LearnScripture.",
+        });
+        return;
+      }
+      let added = 0;
+      setRefs((prev) => {
+        const existing = new Set(prev);
+        const additions = [];
+        for (const ref of normalized) {
+          if (!existing.has(ref)) {
+            existing.add(ref);
+            additions.push(ref);
+          }
+        }
+        added = additions.length;
+        if (added === 0) return prev;
+        return [...prev, ...additions];
+      });
+      if (added > 0) {
+        setLearnSyncResult({
+          type: "success",
+          message: `Imported ${added} new verse${added === 1 ? "" : "s"} from LearnScripture.`,
+        });
+      } else {
+        setLearnSyncResult({
+          type: "info",
+          message: "All LearnScripture verses were already stored locally.",
+        });
+      }
+    } catch (error) {
+      setLearnSyncResult({
+        type: "error",
+        message: error?.message || "Failed to sync with LearnScripture.",
+      });
+    } finally {
+      learnSyncingRef.current = false;
+      setSyncingLearn(false);
+    }
+  }, [learnClient, learnSettings.enabled]);
+  useEffect(() => {
+    const prev = prevLearnSettingsRef.current;
+    const current = learnSettings;
+    const clientConfigured = learnSettings.enabled && learnClient.isConfigured;
+    if (!prev) {
+      prevLearnSettingsRef.current = current;
+      if (clientConfigured) {
+        syncWithLearnScripture();
+      }
+      return;
+    }
+    const prevClient = createLearnScriptureClient(prev);
+    const prevConfigured = prev.enabled && prevClient.isConfigured;
+    if (!prevConfigured && clientConfigured) {
+      syncWithLearnScripture();
+    } else if (!prev.enabled && current.enabled && clientConfigured) {
+      syncWithLearnScripture();
+    }
+    prevLearnSettingsRef.current = current;
+  }, [learnClient, learnSettings, syncWithLearnScripture]);
   const filteredRefs = useMemo(() => {
     if (filter === "ALL") return refs;
     return refs.filter((r) => whichTestament(r) === filter);
   }, [refs, filter]);
-  function addRef() {
+  async function addRef() {
     const clean = newRef.trim();
     if (!clean) return;
     setRefs((prev) => Array.from(new Set([...prev, clean])));
     setNewRef("");
+    if (!learnSettings.enabled || !learnClient.isConfigured) return;
+    try {
+      await learnClient.addVerse(clean);
+      setLearnSyncResult({
+        type: "success",
+        message: `Sent "${clean}" to LearnScripture.`,
+      });
+    } catch (error) {
+      setLearnSyncResult({
+        type: "error",
+        message: error?.message || "Failed to send verse to LearnScripture.",
+      });
+    }
   }
   function removeRef(rm) {
     setRefs((prev) => prev.filter((r) => r !== rm));
@@ -771,6 +907,109 @@ export default function App() {
                   Clear all saved verses
                 </button>
               </div>
+            </div>
+            <div className="mt-4 p-4 rounded-2xl bg-gray-50 border">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
+                <div>
+                  <div className="text-base font-semibold">LearnScripture Sync</div>
+                  <div className="text-xs text-gray-500">
+                    Provide credentials or a token from LearnScripture.net to sync your verse list.
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="rounded"
+                    checked={learnSettings.enabled}
+                    onChange={(e) => updateLearnSetting("enabled", e.target.checked)}
+                  />
+                  <span>Enable sync</span>
+                </label>
+              </div>
+              <div className="grid md:grid-cols-2 gap-3">
+                <label className="text-sm">
+                  <div className="text-gray-600 mb-1">Base URL</div>
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={learnSettings.baseUrl}
+                    onChange={(e) => updateLearnSetting("baseUrl", e.target.value)}
+                    placeholder="https://learnscripture.net"
+                  />
+                </label>
+                <label className="text-sm">
+                  <div className="text-gray-600 mb-1">Progress endpoint</div>
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={learnSettings.progressPath}
+                    onChange={(e) => updateLearnSetting("progressPath", e.target.value)}
+                    placeholder="/api/dashboard/progress/"
+                  />
+                </label>
+                <label className="text-sm">
+                  <div className="text-gray-600 mb-1">Add-verse endpoint</div>
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={learnSettings.addVersePath}
+                    onChange={(e) => updateLearnSetting("addVersePath", e.target.value)}
+                    placeholder="/api/dashboard/progress/"
+                  />
+                </label>
+                <label className="text-sm">
+                  <div className="text-gray-600 mb-1">API token</div>
+                  <input
+                    type="password"
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={learnSettings.apiToken}
+                    onChange={(e) => updateLearnSetting("apiToken", e.target.value)}
+                    placeholder="Token from account settings"
+                  />
+                </label>
+                <label className="text-sm">
+                  <div className="text-gray-600 mb-1">Username</div>
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={learnSettings.username}
+                    onChange={(e) => updateLearnSetting("username", e.target.value)}
+                    placeholder="Optional"
+                  />
+                </label>
+                <label className="text-sm">
+                  <div className="text-gray-600 mb-1">Password</div>
+                  <input
+                    type="password"
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={learnSettings.password}
+                    onChange={(e) => updateLearnSetting("password", e.target.value)}
+                    placeholder="Optional"
+                  />
+                </label>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded-xl bg-gray-900 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => syncWithLearnScripture()}
+                  disabled={syncingLearn || !learnSettings.enabled}
+                >
+                  {syncingLearn ? "Syncing…" : "Sync now"}
+                </button>
+                <div className="text-xs text-gray-500">
+                  Credentials are stored locally in this browser only.
+                </div>
+              </div>
+              {learnSyncResult && (
+                <div
+                  className={`mt-2 text-sm ${
+                    learnSyncResult.type === "error"
+                      ? "text-red-600"
+                      : learnSyncResult.type === "success"
+                      ? "text-green-600"
+                      : "text-gray-600"
+                  }`}
+                >
+                  {learnSyncResult.message}
+                </div>
+              )}
             </div>
             <p className="text-xs text-gray-500">We store settings in your browser only.</p>
           </div>
