@@ -256,6 +256,50 @@ const BOOKS = [
   { n: "Revelation", t: "NT" }
 ];
 const BOOK_TO_TESTAMENT = Object.fromEntries(BOOKS.map((b) => [b.n.toLowerCase(), b.t]));
+
+const BOOK_NAME_NORMALIZED = BOOKS.map((b) => b.n);
+const BOOK_NAME_CANONICAL_MAP = new Map(
+  BOOK_NAME_NORMALIZED.map((name) => [name.replace(/\s+/g, " ").trim().toLowerCase(), name])
+);
+const BOOK_NAME_PATTERN = BOOK_NAME_NORMALIZED
+  .slice()
+  .sort((a, b) => b.length - a.length)
+  .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+"))
+  .join("|");
+const REFERENCE_REGEX = new RegExp(
+  `\\b(${BOOK_NAME_PATTERN})\\s+(\\d{1,3})(?:\\s*:\\s*(\\d{1,3})(?:\\s*-\\s*(\\d{1,3}))?)?`,
+  "gi"
+);
+
+function normalizeBookName(raw) {
+  const key = raw.replace(/\s+/g, " ").trim().toLowerCase();
+  return BOOK_NAME_CANONICAL_MAP.get(key) || raw.replace(/\s+/g, " ").trim();
+}
+
+function extractReferencesFromText(text) {
+  if (!text) return [];
+  const found = [];
+  const seen = new Set();
+  REFERENCE_REGEX.lastIndex = 0;
+  let match;
+  while ((match = REFERENCE_REGEX.exec(text)) !== null) {
+    const bookRaw = match[1] || "";
+    const chapter = match[2] || "";
+    const verse = match[3] || "";
+    const end = match[4] || "";
+    if (!bookRaw || !chapter) continue;
+    const book = normalizeBookName(bookRaw);
+    let normalized = `${book} ${chapter}`;
+    if (verse) normalized += `:${verse}`;
+    if (end) normalized += `-${end}`;
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      found.push(normalized);
+    }
+  }
+  return found;
+}
+
 function whichTestament(ref) {
   const book = (ref || "").match(/^[1-3]?\s*[A-Za-z ]+/);
   if (!book) return "UNK";
@@ -424,6 +468,9 @@ export default function App() {
   const [modeInitial, setModeInitial] = useState(true);
   const [refs, setRefs] = useState(loadRefs());
   const [newRef, setNewRef] = useState("");
+  const [showBulkAdd, setShowBulkAdd] = useState(false);
+  const [bulkInput, setBulkInput] = useState("");
+  const [bulkAddFeedback, setBulkAddFeedback] = useState(null);
   const [translation, setTranslation] = useState(() => {
     if (typeof window === "undefined") return "kjv";
     try {
@@ -473,6 +520,15 @@ export default function App() {
     saveRefs(refs);
   }, [refs]);
   useEffect(() => {
+    if (!showBulkAdd) {
+      setBulkAddFeedback(null);
+    }
+  }, [showBulkAdd]);
+  useEffect(() => {
+    if (!showBulkAdd) return;
+    setBulkAddFeedback(null);
+  }, [bulkInput]);
+  useEffect(() => {
     if (typeof window === "undefined") return;
     try {
       localStorage.setItem(LS_TRANSLATION_KEY, translation);
@@ -501,6 +557,32 @@ export default function App() {
     if (!clean) return;
     setRefs((prev) => Array.from(new Set([...prev, clean])));
     setNewRef("");
+  }
+  function addBulkRefs() {
+    const extracted = extractReferencesFromText(bulkInput);
+    if (extracted.length === 0) {
+      setBulkAddFeedback({ type: "error", message: "No verse references found." });
+      return;
+    }
+    setRefs((prev) => {
+      const seen = new Set(prev);
+      const additions = [];
+      extracted.forEach((ref) => {
+        if (!seen.has(ref)) {
+          seen.add(ref);
+          additions.push(ref);
+        }
+      });
+      if (additions.length === 0) {
+        setBulkAddFeedback({ type: "info", message: "All references were already saved." });
+        return prev;
+      }
+      setBulkAddFeedback({
+        type: "success",
+        message: `Added ${additions.length} new reference${additions.length === 1 ? "" : "s"}.`,
+      });
+      return [...prev, ...additions];
+    });
   }
   function removeRef(rm) {
     setRefs((prev) => prev.filter((r) => r !== rm));
@@ -804,7 +886,7 @@ export default function App() {
           <div className="grid md:grid-cols-3 gap-4">
             <div className="md:col-span-2 p-4 bg-white rounded-2xl shadow border">
               <SectionTitle>Reference List</SectionTitle>
-              <div className="flex gap-2 mb-3">
+              <div className="flex flex-wrap gap-2 mb-3">
                 <input
                   className="flex-1 border rounded-xl px-3 py-2"
                   placeholder="e.g., John 3:16-17"
@@ -815,7 +897,57 @@ export default function App() {
                 <button className="px-4 py-2 rounded-xl bg-gray-900 text-white" onClick={addRef}>
                   Add
                 </button>
+                <button
+                  className="px-4 py-2 rounded-xl border border-gray-300 text-gray-700 bg-white"
+                  type="button"
+                  onClick={() => setShowBulkAdd((prev) => !prev)}
+                >
+                  {showBulkAdd ? "Hide bulk add" : "Bulk add"}
+                </button>
               </div>
+              {showBulkAdd && (
+                <div className="mb-4 border border-gray-200 rounded-xl bg-gray-50 p-3">
+                  <label className="block text-sm text-gray-600 mb-2">
+                    Paste any text containing verse references. We'll extract them automatically.
+                  </label>
+                  <textarea
+                    className="w-full border rounded-xl px-3 py-2 mb-2"
+                    style={{ minHeight: 120 }}
+                    placeholder="Isaiah 9:6, James 2:10, 2 Corinthians 7:10..."
+                    value={bulkInput}
+                    onChange={(e) => setBulkInput(e.target.value)}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="px-4 py-2 rounded-xl bg-gray-900 text-white"
+                      onClick={addBulkRefs}
+                    >
+                      Add all found
+                    </button>
+                    <button
+                      type="button"
+                      className="px-4 py-2 rounded-xl border border-gray-300 text-gray-700 bg-white"
+                      onClick={() => setBulkInput("")}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  {bulkAddFeedback && (
+                    <div
+                      className={`mt-2 text-sm ${
+                        bulkAddFeedback.type === "success"
+                          ? "text-green-700"
+                          : bulkAddFeedback.type === "error"
+                          ? "text-red-600"
+                          : "text-gray-700"
+                      }`}
+                    >
+                      {bulkAddFeedback.message}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="flex items-center gap-2 mb-2">
                 <Tag>Total: {refs.length}</Tag>
                 <Tag>
