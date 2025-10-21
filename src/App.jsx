@@ -49,6 +49,37 @@ function getBookFromRef(ref) {
   return bookParts.join(" ");
 }
 
+function normalizeReference(ref) {
+  const raw = String(ref == null ? "" : ref).trim();
+  if (!raw) return "";
+  const collapsed = raw.replace(/\s+/g, " ");
+  const book = getBookFromRef(collapsed);
+  if (!book) return collapsed;
+  const normalizedBook = normalizeBookName(book);
+  let remainder = collapsed.slice(book.length).trim();
+  if (!remainder) return normalizedBook;
+  remainder = remainder
+    .replace(/\s*:\s*/g, ":")
+    .replace(/\s*-\s*/g, "-")
+    .replace(/\s*;\s*/g, ";")
+    .replace(/\s+/g, " ");
+  return `${normalizedBook} ${remainder}`;
+}
+
+function normalizeAndDedupeRefs(list) {
+  const seen = new Set();
+  const result = [];
+  (Array.isArray(list) ? list : []).forEach((item) => {
+    const normalized = normalizeReference(item);
+    if (!normalized) return;
+    const key = canonicalizeRef(normalized);
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push(normalized);
+  });
+  return result;
+}
+
 function parseTarget(currentRef) {
   const book = getBookFromRef(currentRef);
   const s = String(currentRef || "");
@@ -292,8 +323,10 @@ function extractReferencesFromText(text) {
     let normalized = `${book} ${chapter}`;
     if (verse) normalized += `:${verse}`;
     if (end) normalized += `-${end}`;
-    if (!seen.has(normalized)) {
-      seen.add(normalized);
+    normalized = normalizeReference(normalized);
+    const key = canonicalizeRef(normalized);
+    if (!seen.has(key)) {
+      seen.add(key);
       found.push(normalized);
     }
   }
@@ -315,9 +348,9 @@ const LS_TRANSLATION_KEY = "bible-quiz-translation-v1";
 const loadRefs = () => {
   try {
     const stored = JSON.parse(localStorage.getItem(LS_KEY) || "[]");
-    if (stored.length > 0) return stored;
+    if (Array.isArray(stored) && stored.length > 0) return normalizeAndDedupeRefs(stored);
   } catch {}
-  return [
+  return normalizeAndDedupeRefs([
     "Deuteronomy 32:4",
     "Psalm 1:1-3",
     "Psalm 5:4",
@@ -397,7 +430,7 @@ const loadRefs = () => {
     "1 John 2:5",
     "1 John 3:23-24",
     "1 John 4:7-8"
-  ];
+  ]);
 };
 const saveRefs = (arr) => localStorage.setItem(LS_KEY, JSON.stringify(arr));
 
@@ -553,9 +586,14 @@ export default function App() {
     return refs.filter((r) => whichTestament(r) === filter);
   }, [refs, filter]);
   function addRef() {
-    const clean = newRef.trim();
-    if (!clean) return;
-    setRefs((prev) => Array.from(new Set([...prev, clean])));
+    const normalized = normalizeReference(newRef);
+    if (!normalized) return;
+    setRefs((prev) => {
+      const key = canonicalizeRef(normalized);
+      const alreadyExists = prev.some((existing) => canonicalizeRef(existing) === key);
+      if (alreadyExists) return prev;
+      return [...prev, normalized];
+    });
     setNewRef("");
   }
   function addBulkRefs() {
@@ -565,21 +603,27 @@ export default function App() {
       return;
     }
     setRefs((prev) => {
-      const seen = new Set(prev);
+      const seenKeys = new Set(prev.map((existing) => canonicalizeRef(existing)));
       const additions = [];
       extracted.forEach((ref) => {
-        if (!seen.has(ref)) {
-          seen.add(ref);
-          additions.push(ref);
-        }
+        const normalized = normalizeReference(ref);
+        if (!normalized) return;
+        const key = canonicalizeRef(normalized);
+        if (seenKeys.has(key)) return;
+        seenKeys.add(key);
+        additions.push(normalized);
       });
       if (additions.length === 0) {
         setBulkAddFeedback({ type: "info", message: "All references were already saved." });
         return prev;
       }
+      const duplicatesSkipped = extracted.length - additions.length;
       setBulkAddFeedback({
         type: "success",
-        message: `Added ${additions.length} new reference${additions.length === 1 ? "" : "s"}.`,
+        message:
+          duplicatesSkipped > 0
+            ? `Added ${additions.length} new reference${additions.length === 1 ? "" : "s"}. Skipped ${duplicatesSkipped} duplicate${duplicatesSkipped === 1 ? "" : "s"}.`
+            : `Added ${additions.length} new reference${additions.length === 1 ? "" : "s"}.`,
       });
       return [...prev, ...additions];
     });
